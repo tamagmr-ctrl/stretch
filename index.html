@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Health Manager</title>
 <style>
   :root{
@@ -495,6 +495,136 @@
   }
   .food-tag:hover{ background:var(--accent-soft); border-color:var(--accent); color:var(--accent); }
   .food-tag .kc{ color:var(--text-sub); margin-left:4px; }
+
+  /* Stretch photo button + modal */
+  .item-photo-btn{
+    width:34px;height:34px;
+    border-radius:8px;
+    flex-shrink:0;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    font-size:15px;
+    background:#f2f3f5;
+    border:1px solid var(--border);
+    overflow:hidden;
+  }
+  .item-photo-btn:hover{ border-color:var(--accent); }
+  .item-photo-btn img{ width:100%; height:100%; object-fit:cover; display:block; }
+
+  .photo-modal{
+    position:fixed; inset:0;
+    background:rgba(0,0,0,0.6);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    z-index:1000;
+    padding:20px;
+  }
+  .photo-modal-inner{
+    background:#fff;
+    border-radius:16px;
+    padding:18px;
+    max-width:92vw;
+    max-height:90vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:14px;
+    position:relative;
+    box-shadow:var(--shadow);
+  }
+  .photo-modal-inner img{
+    max-width:100%;
+    max-height:60vh;
+    border-radius:10px;
+    object-fit:contain;
+    background:#f2f3f5;
+  }
+  .photo-modal-close{
+    all:unset;
+    position:absolute;
+    top:6px; right:10px;
+    font-size:18px;
+    cursor:pointer;
+    color:var(--text-sub);
+    width:26px; height:26px;
+    display:flex; align-items:center; justify-content:center;
+    border-radius:50%;
+  }
+  .photo-modal-close:hover{ background:#f2f3f5; }
+  .photo-modal-actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    justify-content:center;
+  }
+
+  /* ---------- Mobile layout ---------- */
+  @media (max-width: 760px){
+    body{ padding:0; align-items:stretch; background:var(--bg-window); }
+    .mac-window{
+      width:100vw;
+      height:100dvh;
+      min-height:unset;
+      max-width:none;
+      border-radius:0;
+      box-shadow:none;
+      border:none;
+      flex-direction:column;
+    }
+    .content{ order:1; min-height:0; }
+    .sidebar{
+      order:2;
+      width:100%;
+      flex-direction:row;
+      align-items:stretch;
+      padding:4px 4px calc(4px + env(safe-area-inset-bottom, 0px)) 4px;
+      border-right:none;
+      border-top:1px solid var(--border);
+      gap:0;
+    }
+    .traffic, .app-title, .sidebar-footer{ display:none; }
+    .nav{
+      flex-direction:row;
+      width:100%;
+      gap:2px;
+    }
+    .nav button{
+      flex:1;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:2px;
+      font-size:9.5px;
+      padding:7px 2px;
+      border-radius:10px;
+      white-space:nowrap;
+    }
+    .nav .ic{ font-size:18px; width:auto; }
+
+    .titlebar{ padding:0 16px; height:48px; }
+    .titlebar .sub{ display:none; }
+    .scroll-area{ padding:14px 14px 20px 14px; }
+    .card{ padding:14px 16px; }
+
+    .grid-2{ grid-template-columns:1fr; }
+    .kcal-summary{ grid-template-columns:repeat(2,1fr); }
+    .stat-row{ flex-wrap:wrap; }
+    .stat-box{ min-width:calc(50% - 6px); }
+
+    .weight-big{ font-size:32px; }
+
+    .input-row{ flex-wrap:wrap; }
+    .input-row input{ flex:1; min-width:120px; }
+
+    .add-row{ flex-wrap:wrap; }
+    .add-row input{ width:100%; flex:none; }
+
+    .food-picker{ flex-direction:column; align-items:stretch; }
+    .food-picker select, .food-picker input{ width:100%; }
+  }
 </style>
 </head>
 <body>
@@ -612,8 +742,9 @@
             <li>180度を目指す必要はなく、<b>左右差や床との距離の変化</b>を記録して進捗を見る</li>
             <li>強度より<b>毎日少しずつ継続</b>する方が柔軟性は向上しやすい。翌日に痛みが残る場合は強度を下げる</li>
           </ul>
-          <div style="margin-top:14px;">
+          <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
             <button class="pill secondary" onclick="addRecommendedStretches()">🔬 内転筋・開脚向けおすすめを追加</button>
+            <button class="pill secondary" onclick="addCustomStretchMenu()">📋 指定メニューを追加</button>
           </div>
         </div>
         <div class="card">
@@ -706,6 +837,18 @@
     </div>
   </div>
 </div>
+
+<div id="photoModal" class="photo-modal" style="display:none;">
+  <div class="photo-modal-inner">
+    <button class="photo-modal-close" onclick="closePhotoModal()">✕</button>
+    <img id="photoModalImg" src="" alt="ストレッチ写真">
+    <div class="photo-modal-actions">
+      <button class="pill secondary" onclick="triggerPhotoReplace()">📷 写真を変更</button>
+      <button class="pill danger" onclick="deleteCurrentPhoto()">写真を削除</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="photoFileInput" accept="image/*" style="display:none">
 
 <script>
 /* ---------------- Storage helpers ---------------- */
@@ -826,6 +969,8 @@ let weightLog = {};   // { 'YYYY-MM-DD': number }
 let dailyLog = {};    // { 'YYYY-MM-DD': { itemId: {done:bool, sets:number} } }
 let foodDB = [];       // [{id,name,unit,kcal,warn}]
 let calorieLog = {};   // { 'YYYY-MM-DD': { breakfast:[{name,unit,kcal}], lunch:[...], dinner:[...], snack:[...] } }
+let stretchPhotos = {}; // { itemId: dataURL }
+let currentPhotoItemId = null;
 let currentTab = 'dashboard';
 
 function getDayLog(date){
@@ -856,6 +1001,7 @@ async function loadAll(){
   dailyLog = await storeGet('dailyLog', {});
   foodDB = await storeGet('foodDB', defaultFoodDB());
   calorieLog = await storeGet('calorieLog', {});
+  stretchPhotos = await storeGet('stretchPhotos', {});
 }
 async function saveProfile(){ await storeSet('profile', profile); }
 async function saveItems(){ await storeSet('items', items); }
@@ -863,6 +1009,7 @@ async function saveWeightLog(){ await storeSet('weightLog', weightLog); }
 async function saveDailyLog(){ await storeSet('dailyLog', dailyLog); }
 async function saveFoodDB(){ await storeSet('foodDB', foodDB); }
 async function saveCalorieLog(){ await storeSet('calorieLog', calorieLog); }
+async function saveStretchPhotos(){ await storeSet('stretchPhotos', stretchPhotos); }
 
 function getCalorieDay(date){
   if(!calorieLog[date]) calorieLog[date] = {breakfast:[], lunch:[], dinner:[], snack:[]};
@@ -1020,15 +1167,22 @@ function renderList(category){
       row.querySelector('[data-action="inc"]').onclick = () => changeSets(category, item.id, 1);
       row.querySelector('[data-action="dec"]').onclick = () => changeSets(category, item.id, -1);
     } else {
+      const photoBtnHtml = category === 'stretch'
+        ? `<div class="item-photo-btn" data-action="photo">${stretchPhotos[item.id] ? `<img src="${stretchPhotos[item.id]}" alt="">` : '📷'}</div>`
+        : '';
       row.innerHTML = `
         <div class="checkbox ${entry.done?'checked':''}">${entry.done?'✓':''}</div>
         <div class="item-name-wrap">
           <div class="item-name ${entry.done?'done':''}">${item.name}</div>
         </div>
+        ${photoBtnHtml}
         <div class="del-btn" data-action="del">✕</div>
       `;
       row.querySelector('.checkbox').onclick = () => toggleCheck(category, item.id);
       row.querySelector('.item-name').onclick = () => toggleCheck(category, item.id);
+      if(category === 'stretch'){
+        row.querySelector('[data-action="photo"]').onclick = (ev) => { ev.stopPropagation(); openItemPhoto(item.id); };
+      }
     }
     row.querySelector('[data-action="del"]').onclick = () => deleteItem(category, item.id);
     el.appendChild(row);
@@ -1037,6 +1191,49 @@ function renderList(category){
     el.innerHTML = '<div class="empty">項目がありません。下から追加してください。</div>';
   }
 }
+
+/* ---------------- Stretch photo modal ---------------- */
+function openItemPhoto(itemId){
+  currentPhotoItemId = itemId;
+  if(stretchPhotos[itemId]){
+    showPhotoModal(stretchPhotos[itemId]);
+  } else {
+    document.getElementById('photoFileInput').click();
+  }
+}
+function triggerPhotoReplace(){
+  document.getElementById('photoFileInput').click();
+}
+function showPhotoModal(src){
+  document.getElementById('photoModalImg').src = src;
+  document.getElementById('photoModal').style.display = 'flex';
+}
+function closePhotoModal(){
+  document.getElementById('photoModal').style.display = 'none';
+}
+async function deleteCurrentPhoto(){
+  if(!currentPhotoItemId) return;
+  delete stretchPhotos[currentPhotoItemId];
+  await saveStretchPhotos();
+  closePhotoModal();
+  renderList('stretch');
+}
+document.getElementById('photoFileInput').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if(!file || !currentPhotoItemId) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    stretchPhotos[currentPhotoItemId] = reader.result;
+    await saveStretchPhotos();
+    renderList('stretch');
+    showPhotoModal(reader.result);
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+});
+document.getElementById('photoModal').addEventListener('click', (e) => {
+  if(e.target.id === 'photoModal') closePhotoModal();
+});
 
 /* ---------------- Calorie rendering ---------------- */
 const mealLabels = {breakfast:'朝食', lunch:'昼食', dinner:'夕食', snack:'間食・飲酒'};
@@ -1187,6 +1384,41 @@ document.getElementById('exNewType').addEventListener('change', (e)=>{
   document.getElementById('exNewSets').style.display = isSets ? 'inline-block' : 'none';
   document.getElementById('exNewReps').style.display = isSets ? 'inline-block' : 'none';
 });
+
+async function addCustomStretchMenu(){
+  const menu = [
+    'CR7 足4の字で逆サイドの肘と膝をつける 3×15',
+    'CR7 サイドクランチ (膝を立てて足首タッチ) 3×30',
+    '腰にタオルを敷いてコの字クランチ ×40',
+    '足4の字でヒップアップ 30秒×2',
+    '希ちゃんストレッチ: L字に開いてバンドで引っ張る',
+    '希ちゃんストレッチ: 腰にローラーを当ててごろごろ 10回×2セット',
+    '足4の字で座って逆サイドにひねる',
+    '立ち膝でお尻を引っ張る (四つん這い、膝は横)',
+    '足を横に伸ばし膝立て',
+    '足を立てて左右交互に倒す (手は後ろにつく)',
+    '肘立て四つん這いで片腕を伸ばし内転',
+    '正座から後ろに手を伸ばして反る (猫背改善)',
+    '椅子に座り足を4の字にして逆側に体をひねる',
+    'タオルを首に巻いて首のストレッチ (左手上げ左に倒し右手で下に引く)',
+    '立ち膝で後ろに屈伸、両手を上げる',
+    'カエル座りで体を揺らす',
+    '座って片足を伸ばし逆足を折り骨盤を前後に動かす',
+  ];
+  const existingNames = new Set(items.stretch.map(i=>i.name));
+  let added = 0;
+  menu.forEach(name => {
+    if(!existingNames.has(name)){
+      items.stretch.push({id:'s'+Date.now()+Math.random().toString(16).slice(2), name});
+      added++;
+    }
+  });
+  await saveItems();
+  render();
+  if(added === 0){
+    alert('このメニューはすべて追加済みです。');
+  }
+}
 
 async function addRecommendedStretches(){
   const recommended = [
