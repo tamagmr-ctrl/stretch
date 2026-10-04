@@ -851,8 +851,50 @@
 <input type="file" id="photoFileInput" accept="image/*" style="display:none">
 
 <script>
-/* ---------------- Storage helpers ---------------- */
+/* ---------------- Storage helpers ----------------
+   iOS Safari の localStorage は端末差はあるが実質5MB前後しか使えず、
+   写真(base64)を保存するとすぐに上限を超えて「保存に失敗 → 次回開くと消えている」
+   という状態になりやすい。そのため IndexedDB (数百MB〜扱える) を主ストレージとして使い、
+   localStorage はIndexedDBが使えない場合の予備としてのみ使う。
+------------------------------------------------- */
 let memoryStore = {};
+const IDB_NAME = 'healthManagerDB';
+const IDB_STORE = 'kv';
+let idbPromise = null;
+
+function openIdb(){
+  if(idbPromise) return idbPromise;
+  idbPromise = new Promise((resolve, reject) => {
+    if(!window.indexedDB){ reject(new Error('indexedDB unavailable')); return; }
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = (e) => reject(e.target.error || new Error('indexedDB open failed'));
+  });
+  return idbPromise;
+}
+async function idbGet(key){
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value){
+  const db = await openIdb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 async function storeGet(key, fallback){
   try{
     if(window.storage && window.storage.get){
@@ -861,21 +903,36 @@ async function storeGet(key, fallback){
     }
   }catch(e){ /* key not found or storage unavailable */ }
   try{
+    const val = await idbGet(key);
+    if(val !== undefined && val !== null) return JSON.parse(val);
+  }catch(e){ /* IndexedDB unavailable */ }
+  try{
     const raw = localStorage.getItem('healthmgr_' + key);
     if(raw !== null && raw !== undefined) return JSON.parse(raw);
   }catch(e){ /* localStorage unavailable (private mode etc.) */ }
   return (key in memoryStore) ? memoryStore[key] : fallback;
 }
+
+// returns true if durably saved (IndexedDB or window.storage), false if only kept in memory
 async function storeSet(key, value){
   memoryStore[key] = value;
+  const json = JSON.stringify(value);
+  let remoteOk = false;
   try{
     if(window.storage && window.storage.set){
-      await window.storage.set(key, JSON.stringify(value));
+      await window.storage.set(key, json);
+      remoteOk = true;
     }
   }catch(e){ /* fall back below */ }
   try{
-    localStorage.setItem('healthmgr_' + key, JSON.stringify(value));
-  }catch(e){ /* ignore, memory fallback already set */ }
+    await idbSet(key, json);
+    return true;
+  }catch(e){ /* IndexedDB failed, try localStorage as last resort */ }
+  try{
+    localStorage.setItem('healthmgr_' + key, json);
+    return true;
+  }catch(e){ /* quota exceeded or unavailable */ }
+  return remoteOk;
 }
 
 /* ---------------- Date helpers ---------------- */
@@ -1009,7 +1066,7 @@ async function saveWeightLog(){ await storeSet('weightLog', weightLog); }
 async function saveDailyLog(){ await storeSet('dailyLog', dailyLog); }
 async function saveFoodDB(){ await storeSet('foodDB', foodDB); }
 async function saveCalorieLog(){ await storeSet('calorieLog', calorieLog); }
-async function saveStretchPhotos(){ await storeSet('stretchPhotos', stretchPhotos); }
+async function saveStretchPhotos(){ return await storeSet('stretchPhotos', stretchPhotos); }
 
 function getCalorieDay(date){
   if(!calorieLog[date]) calorieLog[date] = {breakfast:[], lunch:[], dinner:[], snack:[]};
@@ -1218,18 +1275,57 @@ async function deleteCurrentPhoto(){
   closePhotoModal();
   renderList('stretch');
 }
-document.getElementById('photoFileInput').addEventListener('change', (e) => {
+
+// スマホの写真(数MB)をそのまま保存すると容量を圧迫しやすいため、
+// 長辺1000px・JPEG品質0.75程度まで縮小してから保存する
+function compressImage(file, maxDim = 1000, quality = 0.75){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('image load failed'));
+      img.onload = () => {
+        let { width, height } = img;
+        if(width > height && width > maxDim){
+          height = Math.round(height * (maxDim / width));
+          width = maxDim;
+        } else if(height >= width && height > maxDim){
+          width = Math.round(width * (maxDim / height));
+          height = maxDim;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById('photoFileInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if(!file || !currentPhotoItemId) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    stretchPhotos[currentPhotoItemId] = reader.result;
-    await saveStretchPhotos();
-    renderList('stretch');
-    showPhotoModal(reader.result);
-  };
-  reader.readAsDataURL(file);
+  const itemId = currentPhotoItemId;
   e.target.value = '';
+  if(!file || !itemId) return;
+  let dataUrl;
+  try{
+    dataUrl = await compressImage(file);
+  }catch(err){
+    alert('写真の読み込みに失敗しました。別の写真でお試しください。');
+    return;
+  }
+  stretchPhotos[itemId] = dataUrl;
+  const ok = await saveStretchPhotos();
+  renderList('stretch');
+  showPhotoModal(dataUrl);
+  if(!ok){
+    alert('写真の保存に失敗しました。端末の空き容量を確認するか、他の写真を削除してから再度お試しください。');
+  }
 });
 document.getElementById('photoModal').addEventListener('click', (e) => {
   if(e.target.id === 'photoModal') closePhotoModal();
